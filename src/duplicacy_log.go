@@ -115,7 +115,6 @@ func LOG_WERROR(isWarning bool, logID string, format string, v ...interface{}) {
 	}
 }
 
-
 func LOG_FATAL(logID string, format string, v ...interface{}) {
 	logf(FATAL, logID, format, v...)
 }

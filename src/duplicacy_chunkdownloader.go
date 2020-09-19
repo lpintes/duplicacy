@@ -53,7 +53,7 @@ type ChunkDownloader struct {
 	numberOfDownloadingChunks int   // The number of chunks still being downloaded
 	numberOfActiveChunks      int   // The number of chunks that is being downloaded or has been downloaded but not reclaimed
 
-	NumberOfFailedChunks      int   // The number of chunks that can't be downloaded
+	NumberOfFailedChunks int // The number of chunks that can't be downloaded
 }
 
 func CreateChunkDownloader(config *Config, storage Storage, snapshotCache *FileStorage, showStatistics bool, threads int, allowFailures bool) *ChunkDownloader {
@@ -313,7 +313,7 @@ func (downloader *ChunkDownloader) Stop() {
 		if completion.chunk.isBroken {
 			downloader.NumberOfFailedChunks++
 		}
-}
+	}
 
 	for i := range downloader.completedTasks {
 		downloader.config.PutChunk(downloader.taskList[i].chunk)
@@ -416,7 +416,7 @@ func (downloader *ChunkDownloader) Download(threadIndex int, task ChunkDownloadT
 				completeFailedChunk(chunk)
 				// A chunk is not found.  This is a serious error and hopefully it will never happen.
 				if err != nil {
-					LOG_WERROR(downloader.allowFailures,  "DOWNLOAD_CHUNK", "Chunk %s can't be found: %v", chunkID, err)
+					LOG_WERROR(downloader.allowFailures, "DOWNLOAD_CHUNK", "Chunk %s can't be found: %v", chunkID, err)
 				} else {
 					LOG_WERROR(downloader.allowFailures, "DOWNLOAD_CHUNK", "Chunk %s can't be found", chunkID)
 				}
