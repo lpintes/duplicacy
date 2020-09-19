@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,7 +35,7 @@ type BackupManager struct {
 	config *Config // contains a number of options
 
 	nobackupFile string // don't backup directory when this file name is found
-	filtersFile  string // the path to the filters file
+	filtersFile string  // the path to the filters file
 }
 
 func (manager *BackupManager) SetDryRun(dryRun bool) {
@@ -69,7 +68,7 @@ func CreateBackupManager(snapshotID string, storage Storage, top string, passwor
 		config: config,
 
 		nobackupFile: nobackupFile,
-		filtersFile:  filtersFile,
+		filtersFile: filtersFile,
 	}
 
 	if IsDebugging() {
@@ -110,6 +109,7 @@ func (manager *BackupManager) SetupSnapshotCache(storageName string) bool {
 	manager.SnapshotManager.snapshotCache = storage
 	return true
 }
+
 
 // setEntryContent sets the 4 content pointers for each entry in 'entries'.  'offset' indicates the value
 // to be added to the StartChunk and EndChunk points, used when intending to append 'entries' to the
@@ -185,7 +185,7 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 	LOG_DEBUG("BACKUP_PARAMETERS", "top: %s, quick: %t, tag: %s", top, quickMode, tag)
 
 	if manager.config.rsaPublicKey != nil && len(manager.config.FileKey) > 0 {
-		LOG_INFO("BACKUP_KEY", "RSA encryption is enabled")
+		LOG_INFO("BACKUP_KEY", "RSA encryption is enabled" )
 	}
 
 	remoteSnapshot := manager.SnapshotManager.downloadLatestSnapshot(manager.snapshotID)
@@ -201,7 +201,7 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 
 	LOG_INFO("BACKUP_INDEXING", "Indexing %s", top)
 	localSnapshot, skippedDirectories, skippedFiles, err := CreateSnapshotFromDirectory(manager.snapshotID, shadowTop,
-		manager.nobackupFile, manager.filtersFile)
+		                                                                                manager.nobackupFile, manager.filtersFile)
 	if err != nil {
 		LOG_ERROR("SNAPSHOT_LIST", "Failed to list the directory %s: %v", top, err)
 		return false
@@ -746,7 +746,7 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 // the same as 'top'.  'quickMode' will bypass files with unchanged sizes and timestamps.  'deleteMode' will
 // remove local files that don't exist in the snapshot. 'patterns' is used to include/exclude certain files.
 func (manager *BackupManager) Restore(top string, revision int, inPlace bool, quickMode bool, threads int, overwrite bool,
-	deleteMode bool, setOwner bool, showStatistics bool, patterns []string, allowFailures bool) bool {
+	deleteMode bool, setOwner bool, showStatistics bool, patterns []string, allowFailures bool) int {
 
 	startTime := time.Now().Unix()
 
@@ -769,7 +769,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		err = os.Mkdir(top, 0744)
 		if err != nil {
 			LOG_ERROR("RESTORE_MKDIR", "Can't create the directory to be restored: %v", err)
-			return false
+			return 0
 		}
 	}
 
@@ -777,17 +777,17 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 	err = os.Mkdir(path.Join(top, DUPLICACY_DIRECTORY), 0744)
 	if err != nil && !os.IsExist(err) {
 		LOG_ERROR("RESTORE_MKDIR", "Failed to create the preference directory: %v", err)
-		return false
+		return 0
 	}
 
 	remoteSnapshot := manager.SnapshotManager.DownloadSnapshot(manager.snapshotID, revision)
 	manager.SnapshotManager.DownloadSnapshotContents(remoteSnapshot, patterns, true)
 
 	localSnapshot, _, _, err := CreateSnapshotFromDirectory(manager.snapshotID, top, manager.nobackupFile,
-		manager.filtersFile)
+		                                                    manager.filtersFile)
 	if err != nil {
 		LOG_ERROR("SNAPSHOT_LIST", "Failed to list the repository: %v", err)
-		return false
+		return 0
 	}
 
 	LOG_INFO("RESTORE_START", "Restoring %s to revision %d", top, revision)
@@ -814,18 +814,11 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 
 	var totalFileSize int64
 	var downloadedFileSize int64
-	var failedFileSize int64
+	var failedFiles int
 	var skippedFileSize int64
-
+	var skippedFiles int64
+	
 	var downloadedFiles []*Entry
-	var skippedFiles []*Entry
-
-	// for storing failed files and reason for failure
-	type FailedEntry struct {
-		entry      *Entry
-		failReason string
-	}
-	var failedFiles []*FailedEntry
 
 	i := 0
 	for _, entry := range remoteSnapshot.Files {
@@ -845,7 +838,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 					if quickMode && local.IsSameAs(entry) {
 						LOG_TRACE("RESTORE_SKIP", "File %s unchanged (by size and timestamp)", local.Path)
 						skippedFileSize += entry.Size
-						skippedFiles = append(skippedFiles, entry)
+						skippedFiles++
 						skipped = true
 					}
 				}
@@ -875,7 +868,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 			err = os.Symlink(entry.Link, fullPath)
 			if err != nil {
 				LOG_ERROR("RESTORE_SYMLINK", "Can't create symlink %s: %v", entry.Path, err)
-				return false
+				return 0
 			}
 			entry.RestoreMetadata(fullPath, nil, setOwner)
 			LOG_TRACE("DOWNLOAD_DONE", "Symlink %s updated", entry.Path)
@@ -884,7 +877,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 
 			if err == nil && !stat.IsDir() {
 				LOG_ERROR("RESTORE_NOTDIR", "The path %s is not a directory", fullPath)
-				return false
+				return 0
 			}
 
 			if os.IsNotExist(err) {
@@ -893,7 +886,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 				err = os.MkdirAll(fullPath, 0700)
 				if err != nil && !os.IsExist(err) {
 					LOG_ERROR("RESTORE_MKDIR", "%v", err)
-					return false
+					return 0
 				}
 			}
 		} else {
@@ -928,7 +921,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 				if file.IsSameAsFileInfo(stat) {
 					LOG_TRACE("RESTORE_SKIP", "File %s unchanged (by size and timestamp)", file.Path)
 					skippedFileSize += file.Size
-					skippedFiles = append(skippedFiles, file)
+					skippedFiles++
 					continue
 				}
 			}
@@ -936,7 +929,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 			if file.Size == 0 && file.IsSameAsFileInfo(stat) {
 				LOG_TRACE("RESTORE_SKIP", "File %s unchanged (size 0)", file.Path)
 				skippedFileSize += file.Size
-				skippedFiles = append(skippedFiles, file)
+				skippedFiles++
 				continue
 			}
 		} else {
@@ -952,7 +945,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 			newFile, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.GetPermissions())
 			if err != nil {
 				LOG_ERROR("DOWNLOAD_OPEN", "Failed to create empty file: %v", err)
-				return false
+				return 0
 			}
 			newFile.Close()
 
@@ -969,9 +962,10 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		downloaded, err := manager.RestoreFile(chunkDownloader, chunkMaker, file, top, inPlace, overwrite, showStatistics,
 			totalFileSize, downloadedFileSize, startDownloadingTime, allowFailures)
 		if err != nil {
-			// RestoreFile produced an error
-			failedFileSize += file.Size
-			failedFiles = append(failedFiles, &FailedEntry{file, err.Error()})
+			// RestoreFile returned an error; if allowFailures is false RestoerFile would error out and not return so here
+			// we just need to show a warning
+			failedFiles++
+			LOG_WARN("DOWNLOAD_FAIL", "Failed to restore %s: %v", file.Path, err)
 			continue
 		}
 
@@ -984,7 +978,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		} else {
 			// No error, file was skipped
 			skippedFileSize += file.Size
-			skippedFiles = append(skippedFiles, file)
+			skippedFiles++
 		}
 	}
 
@@ -1009,16 +1003,10 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		for _, file := range downloadedFiles {
 			LOG_INFO("DOWNLOAD_DONE", "Downloaded %s (%d)", file.Path, file.Size)
 		}
-		for _, file := range skippedFiles {
-			LOG_INFO("DOWNLOAD_SKIP", "Skipped %s (%d)", file.Path, file.Size)
-		}
 	}
 
-	if len(failedFiles) > 0 {
-		for _, failed := range failedFiles {
-			file := failed.entry
-			LOG_WARN("RESTORE_STATS", "Restore failed %s (%d): %s", file.Path, file.Size, failed.failReason)
-		}
+	if failedFiles > 0 {
+		return failedFiles
 	}
 
 	LOG_INFO("RESTORE_END", "Restored %s to revision %d", top, revision)
@@ -1026,13 +1014,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		LOG_INFO("RESTORE_STATS", "Files: %d total, %s bytes", len(fileEntries), PrettySize(totalFileSize))
 		LOG_INFO("RESTORE_STATS", "Downloaded %d file, %s bytes, %d chunks",
 			len(downloadedFiles), PrettySize(downloadedFileSize), chunkDownloader.numberOfDownloadedChunks)
-		LOG_INFO("RESTORE_STATS", "Skipped %d file, %s bytes",
-			len(skippedFiles), PrettySize(skippedFileSize))
-		LOG_INFO("RESTORE_STATS", "Failed %d file, %s bytes",
-			len(failedFiles), PrettySize(failedFileSize))
-	}
-	if len(failedFiles) > 0 {
-		LOG_WARN("RESTORE_STATS", "Some files could not be restored")
+		LOG_INFO("RESTORE_STATS", "Skipped %d file, %s bytes", skippedFiles, PrettySize(skippedFileSize))
 	}
 
 	runningTime := time.Now().Unix() - startTime
@@ -1044,7 +1026,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 
 	chunkDownloader.Stop()
 
-	return true
+	return 0
 }
 
 // fileEncoder encodes one file at a time to avoid loading the full json description of the entire file tree
@@ -1204,8 +1186,8 @@ func (manager *BackupManager) UploadSnapshot(chunkMaker *ChunkMaker, uploader *C
 // Restore downloads a file from the storage.  If 'inPlace' is false, the download file is saved first to a temporary
 // file under the .duplicacy directory and then replaces the existing one.  Otherwise, the existing file will be
 // overwritten directly.
-// Return: true, nil:    Restored file;
-//         false, nil:   Skipped file;
+// Return: true, nil:    Restored file; 
+//         false, nil:   Skipped file; 
 //         false, error: Failure to restore file (only if allowFailures == true)
 func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chunkMaker *ChunkMaker, entry *Entry, top string, inPlace bool, overwrite bool,
 	showStatistics bool, totalFileSize int64, downloadedFileSize int64, startTime int64, allowFailures bool) (bool, error) {
@@ -1218,14 +1200,6 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 	preferencePath := GetDuplicacyPreferencePath()
 	temporaryPath := path.Join(preferencePath, "temporary")
 	fullPath := joinPath(top, entry.Path)
-
-	// Function to call on errors ignored by allowFailures
-	var onFailure LogFunc
-	if allowFailures {
-		onFailure = LOG_WARN
-	} else {
-		onFailure = LOG_ERROR
-	}
 
 	defer func() {
 		if existingFile != nil {
@@ -1290,45 +1264,6 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			}
 		} else {
 			LOG_TRACE("DOWNLOAD_OPEN", "Can't open the existing file: %v", err)
-		}
-	} else {
-		// File already exists. Read file and hash entire contents. If fileHash == entry.Hash, skip file.
-		// This is done before additional processing so that any identical files can be skipped regardless of the
-		// -overwrite option
-		fileHasher := manager.config.NewFileHasher()
-		buffer := make([]byte, 64*1024)
-
-		for {
-			n, err := existingFile.Read(buffer)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				LOG_ERROR("DOWNLOAD_OPEN", "Failed to read existing file: %v", err)
-				return false, nil
-			}
-			if n > 0 {
-				fileHasher.Write(buffer[:n])
-			}
-		}
-
-		fileHash := hex.EncodeToString(fileHasher.Sum(nil))
-
-		if fileHash == entry.Hash && fileHash != "" {
-			LOG_TRACE("DOWNLOAD_SKIP", "File %s unchanged (by hash)", entry.Path)
-			return false, nil
-		}
-
-		// fileHash != entry.Hash, warn/error depending on -overwrite option
-		if !overwrite {
-			var msg string
-			if allowFailures {
-				msg = "File %s already exists.  Please specify the -overwrite option to overwrite"
-			} else {
-				msg = "File %s already exists.  Please specify the -overwrite option to continue"
-			}
-			onFailure("DOWNLOAD_OVERWRITE", msg, entry.Path) // will exit program here if allowFailures = false
-			return false, errors.New("file exists")
 		}
 	}
 
@@ -1419,6 +1354,19 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			}
 
 			fileHash = hex.EncodeToString(fileHasher.Sum(nil))
+
+			if fileHash == entry.Hash && fileHash != "" {
+				LOG_TRACE("DOWNLOAD_SKIP", "File %s unchanged (by hash)", entry.Path)
+				return false, nil
+			}
+
+			// fileHash != entry.Hash, warn/error depending on -overwrite option
+			if !overwrite {
+				LOG_WERROR(allowFailures, "DOWNLOAD_OVERWRITE",
+							"File %s already exists.  Please specify the -overwrite option to overwrite", entry.Path)
+				return false, fmt.Errorf("file exists")
+			}
+
 		} else {
 			// If it is not inplace, we want to reuse any chunks in the existing file regardless their offets, so
 			// we run the chunk maker to split the original file.
@@ -1519,14 +1467,15 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 				}
 			} else {
 				chunk := chunkDownloader.WaitForChunk(i)
-				if !chunk.isBroken { // only write if chunk downloaded correctly
-					_, err = existingFile.Write(chunk.GetBytes()[start:end])
-					if err != nil {
-						LOG_ERROR("DOWNLOAD_WRITE", "Failed to write to the file: %v", err)
-						return false, nil
-					}
-					hasher.Write(chunk.GetBytes()[start:end])
+				if chunk.isBroken {
+					return false, fmt.Errorf("chunk %s is corrupted", manager.config.GetChunkIDFromHash(hash))
 				}
+				_, err = existingFile.Write(chunk.GetBytes()[start:end])
+				if err != nil {
+					LOG_ERROR("DOWNLOAD_WRITE", "Failed to write to the file: %v", err)
+					return false, nil
+				}
+				hasher.Write(chunk.GetBytes()[start:end])
 			}
 
 			offset += int64(end - start)
@@ -1541,9 +1490,9 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 		// Verify the download by hash
 		hash := hex.EncodeToString(hasher.Sum(nil))
 		if hash != entry.Hash && hash != "" && entry.Hash != "" && !strings.HasPrefix(entry.Hash, "#") {
-			onFailure("DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s (in-place)",
+			LOG_WERROR(allowFailures, "DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s (in-place)",
 				fullPath, "", entry.Hash)
-			return false, errors.New("file corrupt (hash mismatch)")
+			return false, fmt.Errorf("file corrupt (hash mismatch)")
 		}
 
 	} else {
@@ -1590,18 +1539,19 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 
 			if !hasLocalCopy {
 				chunk := chunkDownloader.WaitForChunk(i)
-				// If the chunk was downloaded from the storage, we may still need a portion of it.
-				if !chunk.isBroken { // only get data if chunk downloaded correctly
-					start := 0
-					if i == entry.StartChunk {
-						start = entry.StartOffset
-					}
-					end := chunk.GetLength()
-					if i == entry.EndChunk {
-						end = entry.EndOffset
-					}
-					data = chunk.GetBytes()[start:end]
+				if chunk.isBroken {
+					return false, fmt.Errorf("chunk %s is corrupted", manager.config.GetChunkIDFromHash(hash))
 				}
+				// If the chunk was downloaded from the storage, we may still need a portion of it.
+				start := 0
+				if i == entry.StartChunk {
+					start = entry.StartOffset
+				}
+				end := chunk.GetLength()
+				if i == entry.EndChunk {
+					end = entry.EndOffset
+				}
+				data = chunk.GetBytes()[start:end]
 			}
 
 			_, err = newFile.Write(data)
@@ -1616,9 +1566,9 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 
 		hash := hex.EncodeToString(hasher.Sum(nil))
 		if hash != entry.Hash && hash != "" && entry.Hash != "" && !strings.HasPrefix(entry.Hash, "#") {
-			onFailure("DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s",
+			LOG_WERROR(allowFailures, "DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s",
 				entry.Path, hash, entry.Hash)
-			return false, errors.New("file corrupt (hash mismatch)")
+			return false, fmt.Errorf("file corrupt (hash mismatch)")
 		}
 
 		if existingFile != nil {
@@ -1737,7 +1687,7 @@ func (manager *BackupManager) CopySnapshots(otherManager *BackupManager, snapsho
 	}
 
 	// These two maps store hashes of chunks in the source and destination storages, respectively.  Note that
-	// the value of 'chunks' is used to indicated if the chunk is a snapshot chunk, while the value of 'otherChunks'
+	// the value of 'chunks' is used to indicated if the chunk is a snapshot chunk, while the value of 'otherChunks' 
 	// is not used.
 	chunks := make(map[string]bool)
 	otherChunks := make(map[string]bool)
@@ -1751,15 +1701,15 @@ func (manager *BackupManager) CopySnapshots(otherManager *BackupManager, snapsho
 		LOG_TRACE("SNAPSHOT_COPY", "Copying snapshot %s at revision %d", snapshot.ID, snapshot.Revision)
 
 		for _, chunkHash := range snapshot.FileSequence {
-			chunks[chunkHash] = true // The chunk is a snapshot chunk
+			chunks[chunkHash] = true  // The chunk is a snapshot chunk
 		}
 
 		for _, chunkHash := range snapshot.ChunkSequence {
-			chunks[chunkHash] = true // The chunk is a snapshot chunk
+			chunks[chunkHash] = true  // The chunk is a snapshot chunk
 		}
 
 		for _, chunkHash := range snapshot.LengthSequence {
-			chunks[chunkHash] = true // The chunk is a snapshot chunk
+			chunks[chunkHash] = true  // The chunk is a snapshot chunk
 		}
 
 		description := manager.SnapshotManager.DownloadSequence(snapshot.ChunkSequence)
@@ -1772,7 +1722,7 @@ func (manager *BackupManager) CopySnapshots(otherManager *BackupManager, snapsho
 
 		for _, chunkHash := range snapshot.ChunkHashes {
 			if _, found := chunks[chunkHash]; !found {
-				chunks[chunkHash] = false // The chunk is a file chunk
+				chunks[chunkHash] = false  // The chunk is a file chunk
 			}
 		}
 
